@@ -22,10 +22,16 @@ What it does:
      is not already disabled (disabled == already hearted TODAY).
   5. Saves newly-discovered working prefixes back to known_prefixes.json
      (permanent -- these don't reset).
-  6. Appends a summary of what happened to run_log.jsonl.
+  6. Appends a count-only summary of what happened to run_log.jsonl.
+
+PRIVACY: nothing in this project stores or logs anyone's name or email --
+not in any JSON file, not in run_log.jsonl, not on the console, not on the
+web dashboard. Only counts (how many people a prefix matched, how many got
+hearted) are kept. The live page DOM is read to decide what to click, but
+that text is never written to disk or printed.
 
 Hearting resets daily on the site -- everyone's Heart button goes back to
-clickable the next day. So hearted_people.json and exhausted_prefixes.json
+clickable the next day. So hearted_count.json and exhausted_prefixes.json
 are PER-DAY caches (each tagged with the date they were written), not
 permanent history: a stale entry from a previous day is discarded on load,
 not treated as still true today.
@@ -33,7 +39,6 @@ not treated as still true today.
 
 import json
 import random
-import re
 import string
 import sys
 import time
@@ -50,7 +55,8 @@ RUN_LOG_FILE = STATE_DIR / "run_log.jsonl"
 # clickable). So both of these are PER-DAY state, not permanent history:
 # stale entries from a previous day are discarded on load, not carried
 # forward, otherwise the bot would skip real work forever.
-HEARTED_PEOPLE_FILE = STATE_DIR / "hearted_people.json"
+# HEARTED_COUNT_FILE holds a single number, never names -- see module docstring.
+HEARTED_COUNT_FILE = STATE_DIR / "hearted_count.json"
 EXHAUSTED_PREFIXES_FILE = STATE_DIR / "exhausted_prefixes.json"
 
 CDP_URL = "http://localhost:9222"
@@ -97,35 +103,21 @@ def save_daily_list(path, items):
     save_json(path, {"date": today_str(), "items": sorted(set(items))})
 
 
+def load_daily_count(path):
+    """Like load_daily_list, but for a single running total (e.g. 'hearted
+    today') instead of a list -- returns 0 if the saved date isn't today."""
+    raw = load_json(path, None)
+    if not isinstance(raw, dict) or raw.get("date") != today_str():
+        return 0
+    return int(raw.get("count", 0))
+
+
+def save_daily_count(path, count):
+    save_json(path, {"date": today_str(), "count": count})
+
+
 def is_all_same_letter(s):
     return len(set(s)) == 1
-
-
-# The site's DOM text concatenates "{Name} {Initial}" directly against the
-# lowercase email local-part with no separator, e.g. a row's scraped label
-# reads "Jane Djane.d@example.com" for name "Jane D" + email
-# "jane.d@example.com". Anchoring the match to a lowercase start correctly
-# skips over that trailing uppercase initial instead of swallowing it into
-# the email.
-EMAIL_RE = re.compile(r"[a-z][a-z0-9_.+-]*@[A-Za-z0-9-]+\.[A-Za-z0-9.-]+")
-
-
-def parse_label(label):
-    """'Jane Djane.d@example.com' -> ('Jane D', 'jane.d@example.com')"""
-    m = EMAIL_RE.search(label)
-    if not m:
-        return label.strip(), None
-    email = m.group(0)
-    name = label[: m.start()].strip()
-    return name, email
-
-
-def format_label(label, width=24):
-    """Raw scraped label -> readable 'Name    email' for logs/UI."""
-    name, email = parse_label(label)
-    if not email:
-        return label
-    return f"{name:<{width}} {email}"
 
 
 def random_prefix():
@@ -190,19 +182,18 @@ def find_daily_cheer_page(browser):
     return fallback
 
 
+#  Deliberately returns ONLY a disabled flag per button -- never the row's
+#  name/email text. The JS still has to look at row.textContent internally
+#  (to find the '@' that marks where one person's row ends and the next
+#  begins) but that text never crosses back into Python; nothing here is
+#  ever capable of storing or printing a name.
 _SNAPSHOT_JS = """
 () => {
     const buttons = Array.from(document.querySelectorAll('button'))
         .filter(b => b.offsetParent !== null && b.textContent.trim() === 'Heart');
     return buttons.map(b => {
-        let row = b.closest('div');
-        for (let i = 0; i < 6 && row; i++) {
-            if (row.textContent.includes('@')) break;
-            row = row.parentElement;
-        }
-        const label = row ? row.textContent.replace('View profileHeart', '').trim() : 'unknown';
         const disabled = b.classList.contains('cursor-not-allowed') || b.disabled;
-        return [label, disabled];
+        return disabled;
     });
 }
 """
@@ -211,20 +202,22 @@ _SNAPSHOT_JS = """
 def _raw_result_signature(page):
     """
     Cheap, ATOMIC snapshot of current result state: ('empty',) or
-    ('people', (labels...)). Uses a single page.evaluate() call (not
-    per-element Playwright locators) so a mid-read re-render of the results
-    list can't cause a stale-handle timeout/crash.
+    ('people', count, disabled_flags_tuple). Uses a single page.evaluate()
+    call (not per-element Playwright locators) so a mid-read re-render of
+    the results list can't cause a stale-handle timeout/crash. The
+    disabled-flags tuple (not names) is what lets the stale-read guard in
+    search_and_wait_for_stable_results() tell two different prefixes' result
+    sets apart.
     """
     if page.locator("text=No Result").count() > 0:
         return ("empty",)
     try:
-        data = page.evaluate(_SNAPSHOT_JS)
+        disabled_flags = page.evaluate(_SNAPSHOT_JS)
     except Exception:
         return ("empty",)
-    labels = tuple(d[0] for d in data)
-    if not labels:
+    if not disabled_flags:
         return ("empty",)
-    return ("people", labels)
+    return ("people", len(disabled_flags), tuple(disabled_flags))
 
 
 def search_and_wait_for_stable_results(page, term, prev_signature, max_wait_s=8, poll_s=0.3):
@@ -242,7 +235,7 @@ def search_and_wait_for_stable_results(page, term, prev_signature, max_wait_s=8,
     box.fill("")
     box.fill(term)
 
-    prev_people = prev_signature[1] if prev_signature and prev_signature[0] == "people" else None
+    prev_identity = prev_signature[1:] if prev_signature and prev_signature[0] == "people" else None
 
     deadline = time.time() + max_wait_s
     last = None
@@ -252,23 +245,27 @@ def search_and_wait_for_stable_results(page, term, prev_signature, max_wait_s=8,
         if current == last:
             if current[0] == "empty":
                 return current
-            if current[0] == "people" and current[1] != prev_people:
+            if current[0] == "people" and current[1:] != prev_identity:
                 return current
-            # same people-list as the previous prefix: keep polling for real
-            # change, protecting against the stale-carryover bug, up to deadline
+            # same (count, disabled-pattern) as the previous prefix: keep
+            # polling for a real change, protecting against the stale-carryover
+            # bug, up to deadline. (A coincidental exact match between two
+            # different prefixes just costs a few extra polls here, not
+            # correctness -- see _raw_result_signature's docstring.)
         last = current
     return last
 
 
 def get_result_rows(page):
-    """Returns list of dicts: {label, index, disabled}. No live button handles
-    (those go stale across re-renders) -- callers re-locate by index right
-    before clicking, via click_heart_by_index()."""
+    """Returns list of dicts: {index, disabled}. No names (see module
+    docstring) and no live button handles (those go stale across
+    re-renders) -- callers re-locate by index right before clicking, via
+    click_heart_by_index()."""
     try:
-        data = page.evaluate(_SNAPSHOT_JS)
+        disabled_flags = page.evaluate(_SNAPSHOT_JS)
     except Exception:
         return []
-    return [{"label": label, "index": i, "disabled": disabled} for i, (label, disabled) in enumerate(data)]
+    return [{"index": i, "disabled": disabled} for i, disabled in enumerate(disabled_flags)]
 
 
 def click_heart_by_index(page, index, timeout_ms=5000):
@@ -284,7 +281,8 @@ def has_no_result(page):
 
 def run():
     known_prefixes = load_json(KNOWN_PREFIXES_FILE, [])
-    hearted_set = set(load_daily_list(HEARTED_PEOPLE_FILE))
+    hearted_today_start = load_daily_count(HEARTED_COUNT_FILE)
+    hearted_this_run = 0
     exhausted = set(load_daily_list(EXHAUSTED_PREFIXES_FILE))
 
     active_known = [p for p in known_prefixes if p not in exhausted]
@@ -295,16 +293,16 @@ def run():
     print(f"Known prefixes: {len(known_prefixes)} total, "
           f"{len(exhausted)} exhausted TODAY (skipped), "
           f"{len(active_known)} to check")
-    print(f"New candidates this run: {new_candidates}")
+    print(f"New candidates this run: {len(new_candidates)}")
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "known_prefixes_checked": known_prefixes,
-        "new_candidates_tried": new_candidates,
+        "known_prefixes_total": len(known_prefixes),
+        "new_candidates_tried": len(new_candidates),
         "newly_discovered_prefixes": [],
-        "hearted_this_run": [],
-        "already_hearted_skipped": [],
-        "no_result_prefixes": [],
+        "hearted_count": 0,
+        "skipped_count": 0,
+        "no_result_count": 0,
     }
 
     with sync_playwright() as p:
@@ -328,7 +326,7 @@ def run():
 
         def checkpoint():
             save_json(KNOWN_PREFIXES_FILE, sorted(set(known_prefixes)))
-            save_daily_list(HEARTED_PEOPLE_FILE, hearted_set)
+            save_daily_count(HEARTED_COUNT_FILE, hearted_today_start + hearted_this_run)
             save_daily_list(EXHAUSTED_PREFIXES_FILE, exhausted)
 
         prev_signature = None
@@ -344,39 +342,41 @@ def run():
                 prev_signature = search_and_wait_for_stable_results(page, prefix, prev_signature)
 
                 if has_no_result(page):
-                    summary["no_result_prefixes"].append(prefix)
-                    print(f"  [{prefix}] no result")
+                    summary["no_result_count"] += 1
                     continue
 
                 rows = get_result_rows(page)
                 if not rows:
-                    summary["no_result_prefixes"].append(prefix)
-                    print(f"  [{prefix}] no result")
+                    summary["no_result_count"] += 1
                     continue
 
                 if prefix not in known_prefixes:
                     known_prefixes.append(prefix)
                     summary["newly_discovered_prefixes"].append(prefix)
-                    print(f"  [{prefix}] NEW working prefix, {len(rows)} match(es)")
+                    print(f"  [{prefix}] NEW working prefix, {len(rows)} people")
                 else:
-                    print(f"  [{prefix}] {len(rows)} match(es)")
+                    print(f"  [{prefix}] {len(rows)} people")
 
+                prefix_hearted = 0
+                prefix_skipped = 0
                 all_done = True
                 for row in rows:
-                    label = row["label"]
                     if row["disabled"]:
-                        summary["already_hearted_skipped"].append(label)
-                        print(f"    - skip (already hearted): {format_label(label)}")
+                        prefix_skipped += 1
                         continue
                     try:
                         click_heart_by_index(page, row["index"])
                         page.wait_for_timeout(1200)
-                        summary["hearted_this_run"].append(label)
-                        hearted_set.add(label)
-                        print(f"    - HEARTED: {format_label(label)}")
+                        prefix_hearted += 1
                     except Exception as e:
                         all_done = False
-                        print(f"    - FAILED to heart {format_label(label)}: {e}")
+                        print(f"    - FAILED to heart one person in [{prefix}]: {e}")
+
+                hearted_this_run += prefix_hearted
+                summary["hearted_count"] += prefix_hearted
+                summary["skipped_count"] += prefix_skipped
+                if prefix_hearted or prefix_skipped:
+                    print(f"    -> {prefix_hearted} hearted, {prefix_skipped} already done today")
 
                 if all_done and prefix not in exhausted:
                     exhausted.add(prefix)
@@ -404,10 +404,11 @@ def run():
         f.write(json.dumps(summary, ensure_ascii=False) + "\n")
 
     print("\n=== Summary ===")
-    print(f"Hearted this run: {summary['hearted_this_run']}")
-    print(f"Already hearted (skipped): {summary['already_hearted_skipped']}")
-    print(f"Newly discovered prefixes: {summary['newly_discovered_prefixes']}")
-    print(f"No-result prefixes: {summary['no_result_prefixes']}")
+    print(f"Hearted this run: {summary['hearted_count']}")
+    print(f"Already hearted today (skipped): {summary['skipped_count']}")
+    print(f"Hearted today (total, across all runs): {hearted_today_start + hearted_this_run}")
+    print(f"Newly discovered prefixes: {len(summary['newly_discovered_prefixes'])}")
+    print(f"No-result prefixes: {summary['no_result_count']}")
     print(f"Exhausted prefixes today (resets tomorrow): {len(exhausted)} total")
 
 

@@ -3,11 +3,14 @@
 Local-only web UI for the Aster Daily Cheer bot. Styled to match the real
 aster.arise.tech Daily Cheer page (same font, colors, pill buttons).
 
-Two tabs:
-  - "Heart Everyone": one button, bulk-hearts everyone not yet hearted
-    (same logic as daily_cheer_bot.py), with a live progress bar + log.
-  - "All People": browsable/searchable list of all known people, each with
-    its own individual Heart button.
+One tab: "Heart Everyone" -- bulk-hearts everyone not yet hearted today
+(same logic as daily_cheer_bot.py), with a live progress bar, log, and
+pause/resume.
+
+PRIVACY: this page shows COUNTS ONLY -- how many people a prefix matched,
+how many have been hearted. It never lists, searches, or displays anyone's
+name or email. (An earlier version had a browsable "All People" list with
+names; that's been removed on purpose.)
 
 Run:
     python3 web_app.py
@@ -22,29 +25,30 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from playwright.sync_api import sync_playwright
 
 from daily_cheer_bot import (
     CDP_URL,
     EXHAUSTED_PREFIXES_FILE,
-    HEARTED_PEOPLE_FILE,
+    HEARTED_COUNT_FILE,
     KNOWN_PREFIXES_FILE,
     NEW_PREFIXES_PER_RUN,
     RUN_LOG_FILE,
     click_heart_by_index,
     ensure_on_daily_cheer,
     find_daily_cheer_page,
-    format_label,
     generate_new_prefixes,
     get_result_rows,
+    load_daily_count,
     load_daily_list,
     load_json,
+    save_daily_count,
     save_daily_list,
     save_json,
     search_and_wait_for_stable_results,
 )
-from people_index import build_people_index, load_hearted_set
+from full_sweep import SWEEP_STATE_FILE
 
 app = Flask(__name__)
 
@@ -61,9 +65,6 @@ _bulk_state = {
     "newly_discovered": [],
     "log": [],
 }
-# Serializes single-person heart clicks against each other (bulk run has its
-# own CDP connection and isn't affected by this lock).
-_single_action_lock = threading.Lock()
 
 
 def _log(msg, cap=200):
@@ -81,7 +82,8 @@ def run_bulk_heart():
         )
 
     known_prefixes = load_json(KNOWN_PREFIXES_FILE, [])
-    hearted_set = load_hearted_set()
+    hearted_today_start = load_daily_count(HEARTED_COUNT_FILE)
+    hearted_this_run = 0
     exhausted = set(load_daily_list(EXHAUSTED_PREFIXES_FILE))
     active_known = [p for p in known_prefixes if p not in exhausted]
     new_candidates = generate_new_prefixes(known_prefixes, NEW_PREFIXES_PER_RUN)
@@ -91,13 +93,13 @@ def run_bulk_heart():
         _bulk_state["total"] = len(all_prefixes)
 
     _log(f"Checking {len(active_known)} active known prefixes "
-         f"({len(exhausted)} exhausted/skipped) + {len(new_candidates)} new: {new_candidates}")
+         f"({len(exhausted)} exhausted/skipped) + {len(new_candidates)} new")
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "web_app bulk run",
-        "hearted_this_run": [],
-        "already_hearted_skipped": [],
+        "hearted_count": 0,
+        "skipped_count": 0,
         "newly_discovered_prefixes": [],
     }
 
@@ -113,7 +115,7 @@ def run_bulk_heart():
 
             def checkpoint():
                 save_json(KNOWN_PREFIXES_FILE, sorted(set(known_prefixes)))
-                save_daily_list(HEARTED_PEOPLE_FILE, hearted_set)
+                save_daily_count(HEARTED_COUNT_FILE, hearted_today_start + hearted_this_run)
                 save_daily_list(EXHAUSTED_PREFIXES_FILE, exhausted)
 
             prev_signature = None
@@ -129,7 +131,7 @@ def run_bulk_heart():
 
                 try:
                     if "daily-cheer" not in page.url:
-                        _log(f"(page drifted to {page.url}, re-navigating back to daily-cheer)")
+                        _log(f"(page drifted away, re-navigating back to daily-cheer)")
                         if not ensure_on_daily_cheer(page):
                             raise RuntimeError("lost the daily-cheer page and could not recover it")
                         prev_signature = None
@@ -142,27 +144,33 @@ def run_bulk_heart():
                         summary["newly_discovered_prefixes"].append(prefix)
                         with _state_lock:
                             _bulk_state["newly_discovered"].append(prefix)
-                        _log(f"[{prefix}] NEW prefix, {len(rows)} match(es)")
+                        _log(f"[{prefix}] new prefix, {len(rows)} people")
 
+                    prefix_hearted = 0
+                    prefix_skipped = 0
                     all_done = True
                     for row in rows:
-                        label = row["label"]
                         if row["disabled"]:
-                            summary["already_hearted_skipped"].append(label)
-                            with _state_lock:
-                                _bulk_state["skipped_count"] += 1
+                            prefix_skipped += 1
                             continue
                         try:
                             click_heart_by_index(page, row["index"])
                             page.wait_for_timeout(1000)
-                            summary["hearted_this_run"].append(label)
-                            hearted_set.add(label)
-                            with _state_lock:
-                                _bulk_state["hearted_count"] += 1
-                            _log(f"HEARTED: {format_label(label)}")
+                            prefix_hearted += 1
                         except Exception as e:
                             all_done = False
-                            _log(f"FAILED to heart {format_label(label)}: {e}")
+                            _log(f"[{prefix}] failed to heart one person: {e}")
+
+                    if prefix_hearted:
+                        hearted_this_run += prefix_hearted
+                        summary["hearted_count"] += prefix_hearted
+                        with _state_lock:
+                            _bulk_state["hearted_count"] += prefix_hearted
+                        _log(f"[{prefix}] hearted {prefix_hearted}")
+                    if prefix_skipped:
+                        summary["skipped_count"] += prefix_skipped
+                        with _state_lock:
+                            _bulk_state["skipped_count"] += prefix_skipped
 
                     if all_done and rows and prefix not in exhausted:
                         exhausted.add(prefix)
@@ -193,8 +201,8 @@ def run_bulk_heart():
             with _state_lock:
                 _bulk_state["error"] = interrupted_error
         else:
-            _log(f"Done. Hearted {len(summary['hearted_this_run'])}, "
-                 f"skipped {len(summary['already_hearted_skipped'])}, "
+            _log(f"Done. Hearted {summary['hearted_count']}, "
+                 f"skipped {summary['skipped_count']}, "
                  f"new prefixes {len(summary['newly_discovered_prefixes'])}")
 
     except Exception as e:
@@ -207,58 +215,11 @@ def run_bulk_heart():
             _bulk_state["done"] = True
 
 
-def heart_person_by_email(email):
-    people = build_people_index()
-    person = people.get(email.lower())
-    if not person or not person["prefixes"]:
-        return {"ok": False, "error": "person not found in known index"}
-
-    prefix = person["prefixes"][0]
-
-    with sync_playwright() as pw:
-        browser = pw.chromium.connect_over_cdp(CDP_URL)
-        page = find_daily_cheer_page(browser)
-        if page is None:
-            browser.close()
-            return {"ok": False, "error": "no open daily-cheer tab found -- open it in Chrome first"}
-
-        page.bring_to_front()
-        if not ensure_on_daily_cheer(page):
-            browser.close()
-            return {"ok": False, "error": "could not load the daily-cheer search page (timed out)"}
-        search_and_wait_for_stable_results(page, prefix, None)
-        rows = get_result_rows(page)
-
-        target = next((r for r in rows if r["label"] == person["label"]), None)
-        if target is None:
-            browser.close()
-            return {"ok": False, "error": f"person not found under prefix '{prefix}' right now"}
-
-        if target["disabled"]:
-            browser.close()
-            return {"ok": True, "already_hearted": True}
-
-        try:
-            click_heart_by_index(page, target["index"])
-            page.wait_for_timeout(1200)
-        except Exception as e:
-            browser.close()
-            return {"ok": False, "error": str(e)}
-
-        browser.close()
-
-    hearted = load_hearted_set()
-    hearted.add(person["label"])
-    save_daily_list(HEARTED_PEOPLE_FILE, hearted)
-
-    return {"ok": True, "already_hearted": False}
-
-
 @app.route("/")
 def index():
     # No caching -- this file gets edited and the server restarted often during
     # development; a stale cached copy in the browser would silently keep
-    # showing old button logic (e.g. incorrect "Hearted" state) after a fix.
+    # showing an old version after a fix.
     resp = app.make_response(INDEX_HTML)
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -266,32 +227,15 @@ def index():
 
 @app.route("/api/summary")
 def api_summary():
-    people = build_people_index()
-    hearted = load_hearted_set()
-    hearted_count = sum(1 for p in people.values() if p["label"] in hearted)
-    return jsonify({"total_people": len(people), "hearted_count": hearted_count})
-
-
-@app.route("/api/people")
-def api_people():
-    people = build_people_index()
-    hearted = load_hearted_set()
-    result = [
-        {"name": p["name"], "email": p["email"], "hearted": p["label"] in hearted}
-        for p in people.values()
-    ]
-    result.sort(key=lambda p: p["name"].lower())
-    return jsonify(result)
-
-
-@app.route("/api/heart", methods=["POST"])
-def api_heart():
-    email = (request.json or {}).get("email", "").strip()
-    if not email:
-        return jsonify({"ok": False, "error": "missing email"}), 400
-    with _single_action_lock:
-        result = heart_person_by_email(email)
-    return jsonify(result), (200 if result.get("ok") else 500)
+    # Counts only -- summed per prefix from sweep_state.json, which itself
+    # never stored names (see full_sweep.py). Someone who matches several
+    # prefixes is counted once per matching prefix, not deduplicated to a
+    # single "unique person" -- that would require keeping an identity to
+    # dedupe against, which is exactly what this project doesn't store.
+    sweep = load_json(SWEEP_STATE_FILE, {"found": {}})
+    total = sum(sweep.get("found", {}).values())
+    hearted = load_daily_count(HEARTED_COUNT_FILE)
+    return jsonify({"total_people": total, "hearted_count": hearted})
 
 
 @app.route("/api/heart-all", methods=["POST"])
@@ -335,7 +279,6 @@ INDEX_HTML = """
 <style>
   :root {
     --bg: #0d0f11;
-    --nav-bg: #0f080d;
     --card: rgba(255,255,255,0.04);
     --card-border: rgba(255,255,255,0.06);
     --text: #ffffff;
@@ -370,14 +313,6 @@ INDEX_HTML = """
   .hero p { color: #cfc6d8; margin: 0; font-size: 15px; }
 
   .wrap { max-width: 680px; margin: -36px auto 48px; padding: 0 20px; position: relative; z-index: 2; }
-
-  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tab-btn {
-    font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 14px;
-    padding: 10px 20px; border-radius: 9999px; border: 1px solid var(--card-border);
-    background: var(--pill-bg-faint); color: var(--text-dim); cursor: pointer;
-  }
-  .tab-btn.active { background: var(--text); color: #0d0f11; border-color: transparent; }
 
   .card {
     background: var(--card);
@@ -444,44 +379,10 @@ INDEX_HTML = """
   .error-badge { background: rgba(234,101,224,0.12); color: var(--pink); }
   .done-badge.show, .error-badge.show { display: block; }
 
-  input[type=text] {
-    width: 100%; font-family: 'Poppins', sans-serif;
-    padding: 12px 16px; font-size: 15px; border-radius: 12px;
-    border: 1px solid var(--card-border); background: #27272a; color: #fff;
-    margin-bottom: 4px;
+  .privacy-note {
+    font-size: 12px; color: var(--text-dim); margin-top: 18px;
+    padding-top: 14px; border-top: 1px solid var(--card-border);
   }
-  input[type=text]::placeholder { color: #71717a; }
-
-  #peopleCount { color: var(--text-dim); font-size: 13px; margin: 10px 0; }
-
-  .person-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 0; border-bottom: 1px solid var(--card-border);
-  }
-  .person-row .left { display: flex; align-items: center; gap: 14px; }
-  .avatar {
-    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
-  }
-  .person-row .name { font-weight: 600; font-size: 15px; }
-  .person-row .email { font-size: 12px; color: var(--text-dim); }
-
-  .heart-btn {
-    font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 14px;
-    border: none; border-radius: 9999px; padding: 8px 14px; cursor: pointer;
-    display: flex; align-items: center; gap: 6px;
-    background: var(--pill-bg-faint); color: var(--text-dim);
-  }
-  .ic { width: 14px; height: 14px; flex-shrink: 0; }
-  .ic path { fill: currentColor; }
-  .heart-btn.hearted { background: var(--pink-solid); color: #fff; cursor: default; }
-  .heart-btn:not(.hearted) .ic path { fill: var(--pink); }
-  .heart-btn:disabled { opacity: 0.6; cursor: wait; }
-  button.cta .ic path { fill: #0d0f11; }
-
-  #peopleList { max-height: 520px; overflow-y: auto; }
-
-  .panel { display: none; }
-  .panel.active { display: block; }
 </style>
 </head>
 <body>
@@ -491,69 +392,41 @@ INDEX_HTML = """
   </div>
 
   <div class="wrap">
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="all">Heart Everyone</button>
-      <button class="tab-btn" data-tab="list">All People</button>
-    </div>
+    <div class="card">
+      <h2>Who Deserves a Heart Today?</h2>
+      <p class="sub">Hearts every known colleague who hasn't been hearted yet today, in one click.</p>
 
-    <div class="panel active" id="panel-all">
-      <div class="card">
-        <h2>Who Deserves a Heart Today?</h2>
-        <p class="sub">Hearts every known colleague who hasn't been hearted yet, in one click.</p>
-
-        <div class="stats">
-          <div class="stat"><div class="num" id="totalPeople">--</div><div class="label">people known</div></div>
-          <div class="stat"><div class="num" id="heartedCount">--</div><div class="label">hearted</div></div>
-          <div class="stat"><div class="num" id="remainingCount">--</div><div class="label">remaining</div></div>
-        </div>
-
-        <div class="cta-row">
-          <button class="cta" id="heartAllBtn">Heart Everyone</button>
-          <button class="cta pause-cta" id="pauseBtn">Pause</button>
-        </div>
-
-        <div class="progress-wrap" id="progressWrap">
-          <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
-          <div class="progress-meta">
-            <span id="progressText">0 / 0 prefixes checked</span>
-            <span id="heartedText">0 hearted</span>
-          </div>
-        </div>
-
-        <div class="done-badge" id="doneBadge"></div>
-        <div class="error-badge" id="errorBadge"></div>
-        <div class="log" id="log"></div>
+      <div class="stats">
+        <div class="stat"><div class="num" id="totalPeople">--</div><div class="label">people known</div></div>
+        <div class="stat"><div class="num" id="heartedCount">--</div><div class="label">hearted today</div></div>
+        <div class="stat"><div class="num" id="remainingCount">--</div><div class="label">remaining</div></div>
       </div>
-    </div>
 
-    <div class="panel" id="panel-list">
-      <div class="card">
-        <h2>All People</h2>
-        <p class="sub">Browse everyone known from past searches and heart them individually.</p>
-        <input type="text" id="search" placeholder="Search by name or email...">
-        <div id="peopleCount"></div>
-        <div id="peopleList"></div>
+      <div class="cta-row">
+        <button class="cta" id="heartAllBtn">Heart Everyone</button>
+        <button class="cta pause-cta" id="pauseBtn">Pause</button>
       </div>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+        <div class="progress-meta">
+          <span id="progressText">0 / 0 prefixes checked</span>
+          <span id="heartedText">0 hearted</span>
+        </div>
+      </div>
+
+      <div class="done-badge" id="doneBadge"></div>
+      <div class="error-badge" id="errorBadge"></div>
+      <div class="log" id="log"></div>
+
+      <p class="privacy-note">Counts only -- this page never shows or stores anyone's name or email.</p>
     </div>
   </div>
 
 <script>
-const HEART_SVG = '<svg class="ic" viewBox="0 0 24 24"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z"/></svg>';
-document.querySelectorAll('button.cta, .heart-btn').forEach(() => {});
+const HEART_SVG = '<svg class="ic" viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0"><path fill="#0d0f11" d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z"/></svg>';
 document.getElementById('heartAllBtn').innerHTML = HEART_SVG + ' Heart Everyone';
 
-// ---------- tabs ----------
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'list') loadPeople();
-  });
-});
-
-// ---------- bulk heart-everyone ----------
 const btn = document.getElementById('heartAllBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const progressWrap = document.getElementById('progressWrap');
@@ -570,7 +443,7 @@ async function loadSummary() {
   const data = await res.json();
   document.getElementById('totalPeople').textContent = data.total_people;
   document.getElementById('heartedCount').textContent = data.hearted_count;
-  document.getElementById('remainingCount').textContent = data.total_people - data.hearted_count;
+  document.getElementById('remainingCount').textContent = Math.max(0, data.total_people - data.hearted_count);
 }
 
 btn.addEventListener('click', async () => {
@@ -605,7 +478,7 @@ async function poll() {
   progressText.textContent = `${s.processed} / ${s.total} prefixes checked` + (s.paused ? ' (paused)' : '');
   heartedText.textContent = `${s.hearted_count} hearted, ${s.skipped_count} already done`;
   logEl.innerHTML = s.log.map(line => {
-    const cls = line.startsWith('HEARTED') ? 'heart-line' : (line.includes('NEW prefix') ? 'new-line' : '');
+    const cls = line.includes('hearted ') ? 'heart-line' : (line.includes('new prefix') ? 'new-line' : '');
     return `<div class="${cls}">${escapeHtml(line)}</div>`;
   }).join('');
   logEl.scrollTop = logEl.scrollHeight;
@@ -622,94 +495,12 @@ async function poll() {
       errorBadge.textContent = 'Error: ' + s.error;
       errorBadge.classList.add('show');
     } else {
-      doneBadge.textContent = `Done! Hearted ${s.hearted_count} new, skipped ${s.skipped_count} already-done, found ${s.newly_discovered.length} new prefixes.`;
+      doneBadge.textContent = `Done! Hearted ${s.hearted_count}, skipped ${s.skipped_count} already-done, found ${s.newly_discovered.length} new prefixes.`;
       doneBadge.classList.add('show');
     }
     loadSummary();
   }
 }
-
-// ---------- all people list ----------
-let people = [];
-let peopleLoaded = false;
-
-async function loadPeople() {
-  if (peopleLoaded) return;
-  const res = await fetch('/api/people');
-  people = await res.json();
-  peopleLoaded = true;
-  renderPeople();
-}
-
-const AVATAR_GRADIENTS = [
-  ['#a3fc88', '#6be2be'],
-  ['#86d8f4', '#5b7fe0'],
-  ['#ed72c4', '#ea65e0'],
-  ['#c4a3fc', '#86d8f4'],
-  ['#fcd34d', '#f472b6'],
-];
-function avatarGradient(seed) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length];
-}
-
-function renderPeople() {
-  const q = document.getElementById('search').value.trim().toLowerCase();
-  const filtered = q
-    ? people.filter(p => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))
-    : people;
-  document.getElementById('peopleCount').textContent = `${filtered.length} / ${people.length} people`;
-
-  const list = document.getElementById('peopleList');
-  list.innerHTML = '';
-  for (const p of filtered) {
-    const [c1, c2] = avatarGradient(p.email);
-    const row = document.createElement('div');
-    row.className = 'person-row';
-    row.innerHTML = `
-      <div class="left">
-        <div class="avatar" style="background: linear-gradient(135deg, ${c1}, ${c2})"></div>
-        <div>
-          <div class="name">${escapeHtml(p.name)}</div>
-          <div class="email">${escapeHtml(p.email)}</div>
-        </div>
-      </div>
-      <button class="heart-btn ${p.hearted ? 'hearted' : ''}" data-email="${escapeHtml(p.email)}">
-        ${HEART_SVG} ${p.hearted ? 'Hearted' : 'Heart'}
-      </button>
-    `;
-    list.appendChild(row);
-  }
-  list.querySelectorAll('.heart-btn').forEach(b => b.addEventListener('click', onHeartClick));
-}
-
-async function onHeartClick(e) {
-  const b = e.currentTarget;
-  if (b.classList.contains('hearted')) return;
-  const email = b.dataset.email;
-  b.disabled = true;
-  try {
-    const res = await fetch('/api/heart', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email})
-    });
-    const data = await res.json();
-    if (data.ok) {
-      b.classList.add('hearted');
-      b.innerHTML = HEART_SVG + ' Hearted';
-      const p = people.find(p => p.email === email);
-      if (p) p.hearted = true;
-    } else {
-      alert('Error: ' + data.error);
-    }
-  } catch (err) {
-    alert('Error: ' + err);
-  } finally {
-    b.disabled = false;
-  }
-}
-
-document.getElementById('search').addEventListener('input', renderPeople);
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

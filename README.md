@@ -91,12 +91,11 @@ a day just confirms there's nothing new to do.
 
 | File | What it does |
 |---|---|
-| `full_sweep.py` | One-time, read-only discovery of search terms that return people |
+| `full_sweep.py` | One-time, read-only discovery of search terms that return people (and how many — never names) |
 | `daily_cheer_bot.py` | The core bot — re-checks known terms, hearts anyone new, self-heals if the page navigates away mid-run |
-| `web_app.py` | Local Flask dashboard (`localhost:5057`) with a "Heart Everyone" button, live progress, pause/resume, and a searchable people list |
-| `people_index.py` | Turns the raw scraped data into a clean name/email list |
+| `web_app.py` | Local Flask dashboard (`localhost:5057`) with a "Heart Everyone" button, live progress, and pause/resume — counts only, never a name list |
 
-All state (who you've discovered, who's been hearted today) lives in
+All state (which search terms work, how many people today, how many hearted) lives in
 `~/.aster_daily_cheer/` on your machine — nothing here is shared or synced between
 people running their own copy.
 
@@ -109,3 +108,7 @@ people running their own copy.
   skipped.
 - **The dashboard is localhost-only.** Bound to `127.0.0.1`; nothing on your network can
   reach it.
+- **Stores counts, never names.** Nothing this project writes to disk, prints to a
+  console, or shows on the dashboard ever contains anyone's name or email — only how
+  many people a search term matched and how many have been hearted. The live page is
+  read to decide what to click, but that text never gets written down anywhere.

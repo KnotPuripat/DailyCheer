@@ -269,7 +269,7 @@
         <text x="985" y="38" class="node-label" font-size="13.5" fill="var(--text)">Local state (JSON)</text>
         <text x="985" y="58" class="node-sub" font-size="11">known_prefixes.json</text>
         <text x="985" y="76" class="node-sub" font-size="11">exhausted_prefixes.json</text>
-        <text x="985" y="94" class="node-sub" font-size="11">hearted_people.json</text>
+        <text x="985" y="94" class="node-sub" font-size="11">hearted_count.json (just a number)</text>
         <text x="985" y="112" class="node-sub" font-size="11">run_log.jsonl</text>
 
         <line x1="170" y1="72" x2="244" y2="72" stroke="var(--amber)" stroke-width="1.75" marker-end="url(#arrow)"></line>
@@ -292,8 +292,8 @@
         <rect x="610" y="296" width="230" height="100" rx="12" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.5"></rect>
         <text x="625" y="318" class="node-label" font-size="13.5" fill="var(--text)">Web dashboard</text>
         <text x="625" y="338" class="node-sub" font-size="11">localhost:5057 — Flask</text>
-        <text x="625" y="356" class="node-sub" font-size="11">"Heart Everyone" tab</text>
-        <text x="625" y="374" class="node-sub" font-size="11">"All People" tab</text>
+        <text x="625" y="356" class="node-sub" font-size="11">"Heart Everyone" button</text>
+        <text x="625" y="374" class="node-sub" font-size="11">counts only -- no names shown</text>
 
         <line x1="170" y1="346" x2="604" y2="346" stroke="var(--amber)" stroke-width="1.75" marker-end="url(#arrow)"></line>
         <text x="387" y="332" text-anchor="middle" class="arrow-label" font-size="10.5" fill="var(--amber)">open page · click Heart Everyone</text>
@@ -413,9 +413,9 @@
         <p>A progress bar and streaming log show each prefix as it's checked; Pause stops cleanly between prefixes, never mid-click.</p>
       </div>
       <div class="step">
-        <div class="num">04 — as needed</div>
-        <h3>Spot-check</h3>
-        <p>The "All People" tab lists everyone known so far with search, for hearting one person by hand.</p>
+        <div class="num">04 — always</div>
+        <h3>Count, never names</h3>
+        <p>Every number on the dashboard and in every log line is a count. No name, no email, no searchable list -- anywhere.</p>
       </div>
     </div>
   </section>
@@ -465,6 +465,7 @@
       <div class="boundary"><strong>Never touches the wallet.</strong> Connecting, signing, approving — all manual, every time, no exceptions.</div>
       <div class="boundary"><strong>Checks before it clicks.</strong> A disabled Heart button is read as "already hearted" and skipped — it never fires blind.</div>
       <div class="boundary"><strong>Dashboard is localhost-only.</strong> Bound to 127.0.0.1; nothing on the network can reach it.</div>
+      <div class="boundary"><strong>Stores counts, never names.</strong> Nothing written to disk, printed to a console, or shown on the dashboard ever contains a name or email -- only how many people a search term matched and how many have been hearted.</div>
     </div>
   </section>
 

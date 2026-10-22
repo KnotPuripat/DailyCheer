@@ -2,8 +2,9 @@
 """
 Exhaustive 26x26x26 prefix sweep for Aster Daily Cheer search.
 
-READ-ONLY / discovery only -- never clicks Heart. Just records which
-3-letter prefixes return people, and who.
+READ-ONLY / discovery only -- never clicks Heart. Records which 3-letter
+prefixes return people, and HOW MANY -- never names or emails. Nothing in
+sweep_state.json (or any other file this project writes) identifies anyone.
 
 Saves incrementally to sweep_state.json so it can be killed and resumed
 without losing progress. Merges discovered prefixes into known_prefixes.json
@@ -81,10 +82,10 @@ def run():
             prev_signature = signature
 
             if signature[0] == "people":
-                labels = list(signature[1])
-                found[prefix] = labels
+                count = len(signature[1])  # count only -- never store the names/emails themselves
+                found[prefix] = count
                 known_prefixes.add(prefix)
-                print(f"  FOUND [{prefix}]: {labels}")
+                print(f"  FOUND [{prefix}]: {count} people")
 
             completed_set.add(prefix)
 
@@ -107,8 +108,8 @@ def run():
 
     print("\n=== Sweep complete ===")
     print(f"Total working prefixes found: {len(found)}")
-    for prefix, labels in sorted(found.items()):
-        print(f"  {prefix}: {labels}")
+    for prefix, count in sorted(found.items()):
+        print(f"  {prefix}: {count} people")
 
 
 if __name__ == "__main__":
