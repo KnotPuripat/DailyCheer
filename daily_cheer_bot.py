@@ -281,7 +281,7 @@ async () => {
     }
     const buttons = Array.from(document.querySelectorAll('button'))
         .filter(b => b.offsetParent !== null && b.textContent.trim() === 'Heart');
-    const hashes = [];
+    const out = [];
     for (const b of buttons) {
         let row = b.closest('div');
         for (let i = 0; i < 6 && row; i++) {
@@ -289,9 +289,10 @@ async () => {
             row = row.parentElement;
         }
         const text = row ? row.textContent.replace('View profileHeart', '').trim() : 'unknown';
-        hashes.push(await sha256(text));
+        const disabled = b.classList.contains('cursor-not-allowed') || b.disabled;
+        out.push([await sha256(text), disabled]);
     }
-    return hashes;
+    return out;
 }
 """
 
@@ -301,13 +302,15 @@ def get_result_hashes(page):
     For ACCURATE unique-person counting only (e.g. count_people.py) -- NOT
     used by the normal search/heart path, which only needs disabled flags.
 
-    Returns a SHA-256 hex digest per visible person row. The hashing happens
-    entirely inside the browser via crypto.subtle; the raw name/email text
-    is read by the page's own JS engine but never serialized back to
-    Python -- only irreversible digests cross the boundary. Two rows for
-    the same person (seen under different search prefixes) hash to the
-    same value, which is what makes deduplication possible without ever
-    holding, storing, or printing anyone's actual name.
+    Returns a list of [sha256_hex_digest, disabled] pairs, one per visible
+    person row. The hashing happens entirely inside the browser via
+    crypto.subtle; the raw name/email text is read by the page's own JS
+    engine but never serialized back to Python -- only irreversible digests
+    (plus a boolean) cross the boundary. Two rows for the same person (seen
+    under different search prefixes) hash to the same value, which is what
+    makes deduplication possible -- for both "how many people total" and
+    "how many have been hearted" -- without ever holding, storing, or
+    printing anyone's actual name.
     """
     try:
         return page.evaluate(_HASH_JS)
