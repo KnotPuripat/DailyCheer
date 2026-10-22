@@ -58,6 +58,10 @@ RUN_LOG_FILE = STATE_DIR / "run_log.jsonl"
 # HEARTED_COUNT_FILE holds a single number, never names -- see module docstring.
 HEARTED_COUNT_FILE = STATE_DIR / "hearted_count.json"
 EXHAUSTED_PREFIXES_FILE = STATE_DIR / "exhausted_prefixes.json"
+# Accurate deduplicated "how many people total" -- a single integer, written
+# by count_people.py. Not date-scoped (unlike the two above): this doesn't
+# reset daily, it just gets refreshed whenever count_people.py is re-run.
+PEOPLE_COUNT_FILE = STATE_DIR / "people_count.json"
 
 CDP_URL = "http://localhost:9222"
 DAILY_CHEER_URL = "https://aster.arise.tech/daily-cheer/"
@@ -266,6 +270,49 @@ def get_result_rows(page):
     except Exception:
         return []
     return [{"index": i, "disabled": disabled} for i, disabled in enumerate(disabled_flags)]
+
+
+_HASH_JS = """
+async () => {
+    async function sha256(s) {
+        const enc = new TextEncoder().encode(s);
+        const buf = await crypto.subtle.digest('SHA-256', enc);
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    const buttons = Array.from(document.querySelectorAll('button'))
+        .filter(b => b.offsetParent !== null && b.textContent.trim() === 'Heart');
+    const hashes = [];
+    for (const b of buttons) {
+        let row = b.closest('div');
+        for (let i = 0; i < 6 && row; i++) {
+            if (row.textContent.includes('@')) break;
+            row = row.parentElement;
+        }
+        const text = row ? row.textContent.replace('View profileHeart', '').trim() : 'unknown';
+        hashes.push(await sha256(text));
+    }
+    return hashes;
+}
+"""
+
+
+def get_result_hashes(page):
+    """
+    For ACCURATE unique-person counting only (e.g. count_people.py) -- NOT
+    used by the normal search/heart path, which only needs disabled flags.
+
+    Returns a SHA-256 hex digest per visible person row. The hashing happens
+    entirely inside the browser via crypto.subtle; the raw name/email text
+    is read by the page's own JS engine but never serialized back to
+    Python -- only irreversible digests cross the boundary. Two rows for
+    the same person (seen under different search prefixes) hash to the
+    same value, which is what makes deduplication possible without ever
+    holding, storing, or printing anyone's actual name.
+    """
+    try:
+        return page.evaluate(_HASH_JS)
+    except Exception:
+        return []
 
 
 def click_heart_by_index(page, index, timeout_ms=5000):

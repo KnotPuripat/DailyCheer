@@ -43,6 +43,7 @@ from daily_cheer_bot import (
     load_daily_count,
     load_daily_list,
     load_json,
+    PEOPLE_COUNT_FILE,
     save_daily_count,
     save_daily_list,
     save_json,
@@ -227,15 +228,18 @@ def index():
 
 @app.route("/api/summary")
 def api_summary():
-    # Counts only -- summed per prefix from sweep_state.json, which itself
-    # never stored names (see full_sweep.py). Someone who matches several
-    # prefixes is counted once per matching prefix, not deduplicated to a
-    # single "unique person" -- that would require keeping an identity to
-    # dedupe against, which is exactly what this project doesn't store.
-    sweep = load_json(SWEEP_STATE_FILE, {"found": {}})
-    total = sum(sweep.get("found", {}).values())
+    # total_people comes from people_count.json, a deduplicated count built
+    # by count_people.py (run it to refresh this number -- see README).
+    # Summing sweep_state.json's per-prefix counts directly would badly
+    # overcount, since the same person usually matches several prefixes.
+    people_count = load_json(PEOPLE_COUNT_FILE, {}).get("count")
+    if people_count is None:
+        # Fallback before count_people.py has ever been run: the naive sum,
+        # clearly inflated, but better than showing nothing.
+        sweep = load_json(SWEEP_STATE_FILE, {"found": {}})
+        people_count = sum(sweep.get("found", {}).values())
     hearted = load_daily_count(HEARTED_COUNT_FILE)
-    return jsonify({"total_people": total, "hearted_count": hearted})
+    return jsonify({"total_people": people_count, "hearted_count": hearted})
 
 
 @app.route("/api/heart-all", methods=["POST"])

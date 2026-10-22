@@ -69,7 +69,20 @@ This tries ~17,500 three-letter search terms against Aster's own search box and 
 which ones return people — read-only, it never clicks Heart. Takes a few hours the first
 time; safe to stop and re-run later, it picks up where it left off.
 
-### 5. Heart everyone, every day
+### 5. Get an accurate "how many people" count (optional, once)
+
+```bash
+python3 count_people.py
+```
+
+Summing each search term's match count would badly overcount, since the same person
+usually matches several different terms. This script dedupes properly by having the
+browser itself compute a one-way SHA-256 hash of each person row — the actual text never
+leaves the browser — so the dashboard's "people known" number is accurate without ever
+storing a name anywhere. Takes a few minutes; re-run any time after `full_sweep.py` finds
+more terms.
+
+### 6. Heart everyone, every day
 
 Either from a terminal:
 
@@ -92,6 +105,7 @@ a day just confirms there's nothing new to do.
 | File | What it does |
 |---|---|
 | `full_sweep.py` | One-time, read-only discovery of search terms that return people (and how many — never names) |
+| `count_people.py` | Optional — computes an accurate deduplicated people count via one-way hashing, never storing a name |
 | `daily_cheer_bot.py` | The core bot — re-checks known terms, hearts anyone new, self-heals if the page navigates away mid-run |
 | `web_app.py` | Local Flask dashboard (`localhost:5057`) with a "Heart Everyone" button, live progress, and pause/resume — counts only, never a name list |
 
