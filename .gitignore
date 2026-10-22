@@ -1,0 +1,22 @@
+# Runtime state -- generated locally, contains real colleague names/emails.
+# Never commit this. (The scripts write it to ~/.aster_daily_cheer/ by
+# default, outside this repo, but ignore it here too as a safety net in
+# case anyone copies files around.)
+*.json
+*.jsonl
+known_prefixes.json
+exhausted_prefixes.json
+hearted_people.json
+sweep_state.json
+run_log.jsonl
+sweep_output.log
+design_ref/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store

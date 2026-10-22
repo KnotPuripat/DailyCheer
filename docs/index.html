@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Cheer Autopilot</title>
+<meta name="description" content="A local bot that finds colleagues on Aster's Daily Cheer page and hearts them automatically — runs on your own machine, against your own wallet.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d12;
+    --surface: #12151c;
+    --surface-2: #171b24;
+    --border: #262b36;
+    --text: #e8eaf0;
+    --text-dim: #8b92a5;
+    --text-faint: #5b6273;
+    --teal: #5eead4;
+    --teal-dim: #2d6b61;
+    --amber: #f5b942;
+    --amber-dim: #6b5324;
+    --violet: #a78bfa;
+    --violet-dim: #4c3f77;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f5f1;
+      --surface: #ffffff;
+      --surface-2: #f0efe9;
+      --border: #ddd9cf;
+      --text: #1b1d22;
+      --text-dim: #5b5f6b;
+      --text-faint: #8d909b;
+      --teal: #0f8a78;
+      --teal-dim: #cdeee8;
+      --amber: #a8681a;
+      --amber-dim: #f3e2c4;
+      --violet: #6d4fd1;
+      --violet-dim: #e3dbfb;
+      color-scheme: light;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    padding-inline: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding-block: 56px 80px; }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    font-weight: 700;
+    margin: 0 0 14px;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    font-size: 17px;
+    color: var(--text-dim);
+    max-width: 640px;
+    margin: 0 0 8px;
+  }
+  .meta-line {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--text-faint);
+    margin: 18px 0 0;
+  }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .cta-btn {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 600;
+    font-size: 14.5px;
+    padding: 12px 22px;
+    border-radius: 9999px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cta-btn.primary { background: var(--teal); color: #04231d; }
+  .cta-btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+  .clone-box {
+    margin-top: 24px;
+    background: #0a0b0f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--teal);
+    max-width: 640px;
+    overflow-x: auto;
+  }
+  .clone-box .dim { color: var(--text-faint); }
+
+  section { margin-top: 64px; }
+  h2 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .section-sub {
+    color: var(--text-dim);
+    font-size: 14.5px;
+    margin: 0 0 28px;
+    max-width: 600px;
+  }
+
+  figure { margin: 0; }
+  .diagram-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    overflow-x: auto;
+  }
+  svg { display: block; width: 100%; height: auto; min-width: 640px; }
+  figcaption {
+    margin-top: 16px;
+    font-size: 13.5px;
+    color: var(--text-dim);
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  .node-label { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+  .node-sub { font-family: 'IBM Plex Mono', monospace; fill: var(--text-dim); }
+  .arrow-label { font-family: 'IBM Plex Mono', monospace; fill: var(--text-dim); }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 18px;
+    margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 12.5px; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace;
+  }
+  .legend-item { display: flex; align-items: center; gap: 7px; }
+  .legend-swatch { width: 18px; height: 3px; border-radius: 2px; }
+
+  .steps {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .step .num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--teal);
+    margin-bottom: 10px;
+  }
+  .step h3 { font-size: 15.5px; margin: 0 0 6px; font-weight: 600; }
+  .step p { font-size: 13.5px; color: var(--text-dim); margin: 0; }
+  .step code { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--teal); }
+
+  .stack-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+  }
+  .stack-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .stack-chip .role {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .stack-chip .what { font-weight: 600; font-size: 14.5px; }
+  .stack-chip .why { font-size: 12.5px; color: var(--text-dim); }
+
+  .boundary-list { display: grid; gap: 10px; }
+  .boundary {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+  .boundary strong { color: var(--text); font-weight: 600; }
+
+  footer {
+    margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-faint);
+  }
+  footer a { color: var(--teal); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Open source · run it on your own machine</p>
+  <h1>Daily Cheer Autopilot</h1>
+  <p class="lede">
+    A local bot that finds colleagues on Aster's Daily Cheer page and sends them a heart,
+    so the whole company doesn't have to be rediscovered by hand every day.
+  </p>
+  <p class="meta-line">~800+ people indexed in one example run · ~980 working search prefixes · once-a-day heart limit</p>
+
+  <div class="cta-row">
+    <a class="cta-btn primary" href="https://github.com/KnotPuripat/DailyCheer#setup">Get started →</a>
+    <a class="cta-btn secondary" href="https://github.com/KnotPuripat/DailyCheer">View source on GitHub</a>
+  </div>
+  <div class="clone-box">
+    <span class="dim">$</span> git clone https://github.com/KnotPuripat/DailyCheer.git<br>
+    <span class="dim">$</span> cd DailyCheer &amp;&amp; pip3 install playwright flask &amp;&amp; playwright install chromium
+  </div>
+
+  <section>
+    <h2>System architecture</h2>
+    <p class="section-sub">
+      Everything runs on one machine — yours. The bot never logs in on its own — it
+      attaches to a Chrome tab you've already signed into, and never opens a new one.
+    </p>
+    <figure class="diagram-card">
+      <svg viewBox="0 0 1220 430" role="img" aria-label="Architecture diagram: a human connects a wallet once in Chrome, Python automation attaches to that browser tab over the Chrome DevTools Protocol to search and heart people on Aster, progress is checkpointed to local JSON files, and a Flask web dashboard drives the same automation on repeat daily visits.">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <rect x="20" y="26" width="150" height="92" rx="12" fill="var(--surface-2)" stroke="var(--amber)" stroke-width="1.5"></rect>
+        <text x="95" y="60" text-anchor="middle" class="node-label" font-size="14" fill="var(--text)">You</text>
+        <text x="95" y="80" text-anchor="middle" class="node-sub" font-size="11">first time only</text>
+
+        <rect x="250" y="16" width="230" height="112" rx="12" fill="var(--surface)" stroke="var(--border)"></rect>
+        <text x="265" y="38" class="node-label" font-size="13.5" fill="var(--text)">Chrome (real browser)</text>
+        <rect x="265" y="50" width="200" height="30" rx="7" fill="var(--surface-2)" stroke="var(--border)"></rect>
+        <text x="365" y="69" text-anchor="middle" class="node-sub" font-size="11">aster.arise.tech tab</text>
+        <rect x="265" y="86" width="200" height="30" rx="7" fill="var(--surface-2)" stroke="var(--border)"></rect>
+        <text x="365" y="105" text-anchor="middle" class="node-sub" font-size="11">MetaMask — connected</text>
+
+        <rect x="610" y="16" width="230" height="112" rx="12" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.5"></rect>
+        <text x="625" y="38" class="node-label" font-size="13.5" fill="var(--text)">Automation (Python)</text>
+        <text x="625" y="58" class="node-sub" font-size="11">full_sweep.py</text>
+        <text x="625" y="76" class="node-sub" font-size="11">daily_cheer_bot.py</text>
+        <text x="625" y="94" class="node-sub" font-size="11">web_app.py</text>
+        <text x="625" y="114" class="node-sub" font-size="10.5" fill="var(--text-faint)">Playwright, driven by CDP</text>
+
+        <rect x="970" y="16" width="230" height="112" rx="12" fill="var(--surface)" stroke="var(--violet)" stroke-width="1.5"></rect>
+        <text x="985" y="38" class="node-label" font-size="13.5" fill="var(--text)">Local state (JSON)</text>
+        <text x="985" y="58" class="node-sub" font-size="11">known_prefixes.json</text>
+        <text x="985" y="76" class="node-sub" font-size="11">exhausted_prefixes.json</text>
+        <text x="985" y="94" class="node-sub" font-size="11">hearted_people.json</text>
+        <text x="985" y="112" class="node-sub" font-size="11">run_log.jsonl</text>
+
+        <line x1="170" y1="72" x2="244" y2="72" stroke="var(--amber)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <text x="207" y="58" text-anchor="middle" class="arrow-label" font-size="10.5" fill="var(--amber)">connect wallet</text>
+
+        <line x1="480" y1="60" x2="604" y2="60" stroke="var(--teal)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <line x1="604" y1="84" x2="480" y2="84" stroke="var(--teal)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <text x="542" y="46" text-anchor="middle" class="arrow-label" font-size="10.5">attach · CDP :9222</text>
+        <text x="542" y="100" text-anchor="middle" class="arrow-label" font-size="10.5">search, read, click Heart</text>
+
+        <line x1="840" y1="60" x2="964" y2="60" stroke="var(--violet)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <line x1="964" y1="84" x2="840" y2="84" stroke="var(--violet)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <text x="902" y="46" text-anchor="middle" class="arrow-label" font-size="10.5">load prefixes</text>
+        <text x="902" y="100" text-anchor="middle" class="arrow-label" font-size="10.5">checkpoint / 20</text>
+
+        <rect x="20" y="300" width="150" height="92" rx="12" fill="var(--surface-2)" stroke="var(--amber)" stroke-width="1.5"></rect>
+        <text x="95" y="334" text-anchor="middle" class="node-label" font-size="14" fill="var(--text)">You</text>
+        <text x="95" y="354" text-anchor="middle" class="node-sub" font-size="11">every day</text>
+
+        <rect x="610" y="296" width="230" height="100" rx="12" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.5"></rect>
+        <text x="625" y="318" class="node-label" font-size="13.5" fill="var(--text)">Web dashboard</text>
+        <text x="625" y="338" class="node-sub" font-size="11">localhost:5057 — Flask</text>
+        <text x="625" y="356" class="node-sub" font-size="11">"Heart Everyone" tab</text>
+        <text x="625" y="374" class="node-sub" font-size="11">"All People" tab</text>
+
+        <line x1="170" y1="346" x2="604" y2="346" stroke="var(--amber)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <text x="387" y="332" text-anchor="middle" class="arrow-label" font-size="10.5" fill="var(--amber)">open page · click Heart Everyone</text>
+
+        <line x1="700" y1="128" x2="700" y2="292" stroke="var(--teal)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <line x1="750" y1="292" x2="750" y2="128" stroke="var(--teal)" stroke-width="1.75" marker-end="url(#arrow)"></line>
+        <text x="662" y="215" text-anchor="middle" class="arrow-label" font-size="10.5" transform="rotate(-90 662 215)">runs same bot logic</text>
+        <text x="788" y="215" text-anchor="middle" class="arrow-label" font-size="10.5" transform="rotate(-90 788 215)">progress · pause / resume</text>
+      </svg>
+      <figcaption>
+        The wallet connects once, by hand, in a real Chrome window. Every run after that — command
+        line or dashboard — attaches to that same tab over the Chrome DevTools Protocol instead of
+        opening a fresh one, which is what keeps MetaMask from asking for a new signature every time.
+      </figcaption>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--amber)"></span>human action</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--teal)"></span>browser automation (CDP)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--violet)"></span>local state read/write</div>
+      </div>
+    </figure>
+  </section>
+
+  <section>
+    <h2>What happens per search prefix</h2>
+    <p class="section-sub">
+      The bot doesn't know people's names up front — it discovers three-letter strings
+      that return results on Aster's own search box, once, in a full sweep. Every daily run
+      just replays that list, skipping what's already done.
+    </p>
+    <figure class="diagram-card">
+      <svg viewBox="0 0 1220 340" role="img" aria-label="Flowchart: for each search prefix, skip it entirely if already exhausted today; otherwise search Aster and, if people are found, check each one's Heart button — skip if already disabled, otherwise click it; successes are checkpointed to disk every 20 prefixes so a crash never loses progress.">
+        <defs>
+          <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <rect x="20" y="44" width="150" height="56" rx="10" fill="var(--surface-2)" stroke="var(--border)"></rect>
+        <text x="95" y="77" text-anchor="middle" class="node-label" font-size="12.5">Next prefix</text>
+
+        <polygon points="300,32 360,72 300,112 240,72" fill="var(--surface-2)" stroke="var(--border)"></polygon>
+        <text x="300" y="68" text-anchor="middle" class="node-sub" font-size="10.5">exhausted</text>
+        <text x="300" y="80" text-anchor="middle" class="node-sub" font-size="10.5">today?</text>
+
+        <rect x="420" y="44" width="160" height="56" rx="10" fill="var(--surface-2)" stroke="var(--border)"></rect>
+        <text x="500" y="68" text-anchor="middle" class="node-sub" font-size="11">Search on Aster</text>
+        <text x="500" y="84" text-anchor="middle" class="node-sub" font-size="10">poll until stable</text>
+
+        <polygon points="660,32 720,72 660,112 600,72" fill="var(--surface-2)" stroke="var(--border)"></polygon>
+        <text x="660" y="68" text-anchor="middle" class="node-sub" font-size="10.5">people</text>
+        <text x="660" y="80" text-anchor="middle" class="node-sub" font-size="10.5">found?</text>
+
+        <polygon points="860,32 920,72 860,112 800,72" fill="var(--surface-2)" stroke="var(--border)"></polygon>
+        <text x="860" y="64" text-anchor="middle" class="node-sub" font-size="10">Heart button</text>
+        <text x="860" y="78" text-anchor="middle" class="node-sub" font-size="10.5">disabled?</text>
+
+        <rect x="980" y="44" width="150" height="56" rx="10" fill="var(--teal-dim)" stroke="var(--teal)" stroke-width="1.5"></rect>
+        <text x="1055" y="77" text-anchor="middle" class="node-label" font-size="12.5" fill="var(--text)">Click Heart</text>
+
+        <line x1="170" y1="72" x2="236" y2="72" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <line x1="364" y1="72" x2="416" y2="72" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <text x="390" y="62" text-anchor="middle" class="arrow-label" font-size="10">no</text>
+        <line x1="580" y1="72" x2="596" y2="72" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <line x1="724" y1="72" x2="796" y2="72" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <text x="760" y="62" text-anchor="middle" class="arrow-label" font-size="10">yes</text>
+        <line x1="924" y1="72" x2="976" y2="72" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <text x="950" y="62" text-anchor="middle" class="arrow-label" font-size="10">no</text>
+
+        <line x1="300" y1="112" x2="300" y2="190" stroke="var(--amber)" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <text x="314" y="155" class="arrow-label" font-size="10" fill="var(--amber)">yes</text>
+        <rect x="200" y="196" width="200" height="46" rx="9" fill="var(--surface-2)" stroke="var(--amber)"></rect>
+        <text x="300" y="224" text-anchor="middle" class="node-sub" font-size="11" fill="var(--amber)">Skip — no search at all</text>
+
+        <line x1="660" y1="112" x2="660" y2="190" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <text x="674" y="155" class="arrow-label" font-size="10">no</text>
+        <rect x="560" y="196" width="200" height="46" rx="9" fill="var(--surface-2)" stroke="var(--border)"></rect>
+        <text x="660" y="224" text-anchor="middle" class="node-sub" font-size="11">Log "no result", move on</text>
+
+        <line x1="860" y1="112" x2="860" y2="190" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <text x="874" y="155" class="arrow-label" font-size="10">yes</text>
+        <rect x="760" y="196" width="200" height="46" rx="9" fill="var(--surface-2)" stroke="var(--border)"></rect>
+        <text x="860" y="224" text-anchor="middle" class="node-sub" font-size="11">Skip — already hearted today</text>
+
+        <line x1="1055" y1="100" x2="1055" y2="300" stroke="var(--violet)" stroke-width="1.5"></line>
+        <line x1="1055" y1="300" x2="700" y2="300" stroke="var(--violet)" stroke-width="1.5"></line>
+        <line x1="700" y1="300" x2="700" y2="276" stroke="var(--violet)" stroke-width="1.5" marker-end="url(#arrow2)"></line>
+        <rect x="460" y="280" width="240" height="46" rx="9" fill="var(--violet-dim)" stroke="var(--violet)"></rect>
+        <text x="580" y="301" text-anchor="middle" class="node-sub" font-size="10.5" fill="var(--text)">Checkpoint to disk</text>
+        <text x="580" y="316" text-anchor="middle" class="node-sub" font-size="9.5">every 20 prefixes</text>
+      </svg>
+      <figcaption>
+        Three cheap guards do most of the work: an exhausted prefix is never searched again
+        <em>today</em> (hearting resets daily, so it's checked fresh tomorrow), a person whose
+        Heart button is already disabled is never clicked twice, and everything lands on disk
+        every 20 prefixes so a dropped tab or closed browser loses minutes of progress, not
+        the whole run.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>How it's used</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="num">01 — once</div>
+        <h3>Discover</h3>
+        <p><code>full_sweep.py</code> tries ~17,500 non-repeating three-letter strings against Aster's search box and records which ones return people. Read-only — no hearts sent.</p>
+      </div>
+      <div class="step">
+        <div class="num">02 — daily</div>
+        <h3>Run</h3>
+        <p>Either <code>python3 daily_cheer_bot.py</code> from a terminal, or the "Heart Everyone" button on the dashboard — same engine either way.</p>
+      </div>
+      <div class="step">
+        <div class="num">03 — live</div>
+        <h3>Watch</h3>
+        <p>A progress bar and streaming log show each prefix as it's checked; Pause stops cleanly between prefixes, never mid-click.</p>
+      </div>
+      <div class="step">
+        <div class="num">04 — as needed</div>
+        <h3>Spot-check</h3>
+        <p>The "All People" tab lists everyone known so far with search, for hearting one person by hand.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tech stack</h2>
+    <div class="stack-grid">
+      <div class="stack-chip">
+        <span class="role">Automation</span>
+        <span class="what">Playwright (Python)</span>
+        <span class="why">attaches to an existing browser instead of launching one</span>
+      </div>
+      <div class="stack-chip">
+        <span class="role">Transport</span>
+        <span class="what">Chrome DevTools Protocol</span>
+        <span class="why">remote-debugging-port, no browser extension needed</span>
+      </div>
+      <div class="stack-chip">
+        <span class="role">Browser</span>
+        <span class="what">real Google Chrome</span>
+        <span class="why">keeps the actual MetaMask session, not a throwaway profile</span>
+      </div>
+      <div class="stack-chip">
+        <span class="role">Dashboard backend</span>
+        <span class="what">Flask</span>
+        <span class="why">localhost-only, runs the bulk job in a background thread</span>
+      </div>
+      <div class="stack-chip">
+        <span class="role">Dashboard frontend</span>
+        <span class="what">vanilla HTML / CSS / JS</span>
+        <span class="why">no framework; polls a status endpoint every 800ms</span>
+      </div>
+      <div class="stack-chip">
+        <span class="role">State</span>
+        <span class="what">flat JSON files</span>
+        <span class="why">no database — a handful of local files are the entire memory</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Safety boundaries</h2>
+    <p class="section-sub">Rules the bot never breaks, on purpose.</p>
+    <div class="boundary-list">
+      <div class="boundary"><strong>Runs only on your machine, with your wallet.</strong> There's no shared server or shared account — everyone who wants this clones the repo and runs their own copy.</div>
+      <div class="boundary"><strong>Never opens a new tab.</strong> A fresh tab re-triggers a MetaMask sign-in prompt the bot can't and won't approve — it always attaches to a tab you already opened.</div>
+      <div class="boundary"><strong>Never touches the wallet.</strong> Connecting, signing, approving — all manual, every time, no exceptions.</div>
+      <div class="boundary"><strong>Checks before it clicks.</strong> A disabled Heart button is read as "already hearted" and skipped — it never fires blind.</div>
+      <div class="boundary"><strong>Dashboard is localhost-only.</strong> Bound to 127.0.0.1; nothing on the network can reach it.</div>
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://github.com/KnotPuripat/DailyCheer">github.com/KnotPuripat/DailyCheer</a>
+    · state lives in <code>~/.aster_daily_cheer</code> on your own machine
+  </footer>
+</div>
+</body>
+</html>
