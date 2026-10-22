@@ -48,8 +48,11 @@ from daily_cheer_bot import (
     save_daily_list,
     save_json,
     search_and_wait_for_stable_results,
+    seed_known_prefixes,
 )
 from full_sweep import SWEEP_STATE_FILE
+
+seed_known_prefixes()
 
 app = Flask(__name__)
 

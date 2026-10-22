@@ -2,9 +2,12 @@
 # Never commit this. (The scripts write it to ~/.aster_daily_cheer/ by
 # default, outside this repo, but ignore it here too as a safety net in
 # case anyone copies files around.)
+# known_prefixes.json is the one exception: it's just a list of validated
+# 3-letter search prefixes (no names/emails), shipped so clones don't have
+# to re-run full_sweep.py's random scan from scratch.
 *.json
+!known_prefixes.json
 *.jsonl
-known_prefixes.json
 exhausted_prefixes.json
 hearted_people.json
 sweep_state.json

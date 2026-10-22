@@ -12,10 +12,13 @@ for a diagram of how it works before you dig into the code.
 ## How it works, in short
 
 1. You connect your wallet once, by hand, in a normal Chrome window.
-2. A one-time sweep (`full_sweep.py`) discovers which search terms return people.
-3. From then on, `daily_cheer_bot.py` (or the web dashboard) re-checks those terms and
-   hearts anyone it finds — skipping people it already hearted today, since the site
-   resets who's heart-able once every day.
+2. The repo ships with `known_prefixes.json` — a pre-validated list of search terms
+   (just 3-letter strings, no names) — so you don't need to rediscover the company from
+   scratch. It's seeded into your local state automatically on first run.
+3. `daily_cheer_bot.py` (or the web dashboard) re-checks those terms and hearts anyone it
+   finds — skipping people it already hearted today, since the site resets who's
+   heart-able once every day. It also tries a few new random terms each run, so the list
+   grows over time as the company adds people.
 
 It never opens a new browser tab (that would re-trigger a wallet signature prompt it
 can't approve for you), never touches MetaMask itself, and only clicks a Heart button
@@ -59,7 +62,11 @@ pip3 install playwright flask
 playwright install chromium
 ```
 
-### 4. Discover who's on Aster (once)
+### 4. (Optional) Discover any newly-added colleagues
+
+The repo already ships with a validated `known_prefixes.json`, seeded automatically into
+`~/.aster_daily_cheer/` the first time you run any script — you can skip straight to step
+6. If you want to check for people who joined after that list was built, run:
 
 ```bash
 python3 full_sweep.py

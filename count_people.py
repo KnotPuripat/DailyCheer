@@ -47,6 +47,7 @@ from daily_cheer_bot import (
     save_daily_count,
     save_json,
     search_and_wait_for_stable_results,
+    seed_known_prefixes,
 )
 
 STATE_FILE = STATE_DIR / "people_count_state.json"
@@ -70,6 +71,7 @@ def get_page_or_none(browser):
 
 
 def run():
+    seed_known_prefixes()
     known_prefixes = load_json(KNOWN_PREFIXES_FILE, [])
     if not known_prefixes:
         print("No known prefixes yet -- run full_sweep.py first.")

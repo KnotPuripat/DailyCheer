@@ -30,6 +30,7 @@ from daily_cheer_bot import (
     load_json,
     save_json,
     search_and_wait_for_stable_results,
+    seed_known_prefixes,
 )
 
 SWEEP_STATE_FILE = STATE_DIR / "sweep_state.json"
@@ -44,6 +45,7 @@ def all_prefixes():
 
 
 def run():
+    seed_known_prefixes()
     state = load_json(SWEEP_STATE_FILE, {"completed": [], "found": {}})
     completed_set = set(state["completed"])
     found = state["found"]

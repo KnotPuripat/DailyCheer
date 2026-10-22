@@ -69,6 +69,24 @@ SEARCH_SELECTOR = '[placeholder="Search by name, email"]'
 NEW_PREFIXES_PER_RUN = 5
 
 
+def seed_known_prefixes():
+    """
+    First run on a fresh machine: ~/.aster_daily_cheer/known_prefixes.json
+    doesn't exist yet. Rather than starting from an empty list and forcing
+    everyone to re-run full_sweep.py's hours-long random scan, seed it from
+    the repo's bundled known_prefixes.json (just 3-letter strings, no
+    names) so the bot immediately searches the already-validated terms.
+    full_sweep.py / daily_cheer_bot.py still discover new ones over time as
+    the company adds people.
+    """
+    if KNOWN_PREFIXES_FILE.exists():
+        return
+    bundled = Path(__file__).parent / "known_prefixes.json"
+    if bundled.exists():
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        KNOWN_PREFIXES_FILE.write_text(bundled.read_text())
+
+
 def load_json(path, default):
     if path.exists():
         try:
@@ -330,6 +348,7 @@ def has_no_result(page):
 
 
 def run():
+    seed_known_prefixes()
     known_prefixes = load_json(KNOWN_PREFIXES_FILE, [])
     hearted_today_start = load_daily_count(HEARTED_COUNT_FILE)
     hearted_this_run = 0
