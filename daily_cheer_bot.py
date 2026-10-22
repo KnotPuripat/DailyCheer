@@ -14,15 +14,12 @@ What it does:
   1. Attaches to the existing, already-authenticated "Daily Cheer" tab
      (never opens a new tab -- opening a new tab re-triggers a MetaMask
      signature request, which this script cannot and will not approve).
-  2. Re-checks every previously-discovered 3-letter prefix (stored in
-     known_prefixes.json) for new people.
-  3. Tries NEW_PREFIXES_PER_RUN random 3-letter prefixes (excluding
-     aaa/bbb/ccc-style all-same-letter ones, and ones already known).
-  4. For every person found, clicks "Heart" -- but only if the button
+  2. Re-checks every prefix in known_prefixes.json -- and only those. No
+     random searching outside this list; run full_sweep.py by hand if you
+     want to look for newly-added colleagues.
+  3. For every person found, clicks "Heart" -- but only if the button
      is not already disabled (disabled == already hearted TODAY).
-  5. Saves newly-discovered working prefixes back to known_prefixes.json
-     (permanent -- these don't reset).
-  6. Appends a count-only summary of what happened to run_log.jsonl.
+  4. Appends a count-only summary of what happened to run_log.jsonl.
 
 PRIVACY: nothing in this project stores or logs anyone's name or email --
 not in any JSON file, not in run_log.jsonl, not on the console, not on the
@@ -38,8 +35,6 @@ not treated as still true today.
 """
 
 import json
-import random
-import string
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -66,7 +61,6 @@ PEOPLE_COUNT_FILE = STATE_DIR / "people_count.json"
 CDP_URL = "http://localhost:9222"
 DAILY_CHEER_URL = "https://aster.arise.tech/daily-cheer/"
 SEARCH_SELECTOR = '[placeholder="Search by name, email"]'
-NEW_PREFIXES_PER_RUN = 5
 
 
 def seed_known_prefixes():
@@ -140,25 +134,6 @@ def save_daily_count(path, count):
 
 def is_all_same_letter(s):
     return len(set(s)) == 1
-
-
-def random_prefix():
-    return "".join(random.choice(string.ascii_lowercase) for _ in range(3))
-
-
-def generate_new_prefixes(known, count):
-    known_set = set(known)
-    candidates = []
-    attempts = 0
-    while len(candidates) < count and attempts < count * 50:
-        attempts += 1
-        p = random_prefix()
-        if is_all_same_letter(p):
-            continue
-        if p in known_set or p in candidates:
-            continue
-        candidates.append(p)
-    return candidates
 
 
 def ensure_on_daily_cheer(page, timeout_ms=15000):
@@ -354,21 +329,16 @@ def run():
     hearted_this_run = 0
     exhausted = set(load_daily_list(EXHAUSTED_PREFIXES_FILE))
 
-    active_known = [p for p in known_prefixes if p not in exhausted]
-    new_candidates = generate_new_prefixes(known_prefixes, NEW_PREFIXES_PER_RUN)
-    all_prefixes_to_try = active_known + new_candidates
+    all_prefixes_to_try = [p for p in known_prefixes if p not in exhausted]
 
     print(f"Today: {today_str()}")
     print(f"Known prefixes: {len(known_prefixes)} total, "
           f"{len(exhausted)} exhausted TODAY (skipped), "
-          f"{len(active_known)} to check")
-    print(f"New candidates this run: {len(new_candidates)}")
+          f"{len(all_prefixes_to_try)} to check")
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "known_prefixes_total": len(known_prefixes),
-        "new_candidates_tried": len(new_candidates),
-        "newly_discovered_prefixes": [],
         "hearted_count": 0,
         "skipped_count": 0,
         "no_result_count": 0,
@@ -419,12 +389,7 @@ def run():
                     summary["no_result_count"] += 1
                     continue
 
-                if prefix not in known_prefixes:
-                    known_prefixes.append(prefix)
-                    summary["newly_discovered_prefixes"].append(prefix)
-                    print(f"  [{prefix}] NEW working prefix, {len(rows)} people")
-                else:
-                    print(f"  [{prefix}] {len(rows)} people")
+                print(f"  [{prefix}] {len(rows)} people")
 
                 prefix_hearted = 0
                 prefix_skipped = 0
@@ -476,7 +441,6 @@ def run():
     print(f"Hearted this run: {summary['hearted_count']}")
     print(f"Already hearted today (skipped): {summary['skipped_count']}")
     print(f"Hearted today (total, across all runs): {hearted_today_start + hearted_this_run}")
-    print(f"Newly discovered prefixes: {len(summary['newly_discovered_prefixes'])}")
     print(f"No-result prefixes: {summary['no_result_count']}")
     print(f"Exhausted prefixes today (resets tomorrow): {len(exhausted)} total")
 

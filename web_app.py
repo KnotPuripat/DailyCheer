@@ -33,12 +33,10 @@ from daily_cheer_bot import (
     EXHAUSTED_PREFIXES_FILE,
     HEARTED_COUNT_FILE,
     KNOWN_PREFIXES_FILE,
-    NEW_PREFIXES_PER_RUN,
     RUN_LOG_FILE,
     click_heart_by_index,
     ensure_on_daily_cheer,
     find_daily_cheer_page,
-    generate_new_prefixes,
     get_result_rows,
     load_daily_count,
     load_daily_list,
@@ -66,7 +64,6 @@ _bulk_state = {
     "processed": 0,
     "hearted_count": 0,
     "skipped_count": 0,
-    "newly_discovered": [],
     "log": [],
 }
 
@@ -82,29 +79,26 @@ def run_bulk_heart():
     with _state_lock:
         _bulk_state.update(
             running=True, paused=False, done=False, error=None, total=0, processed=0,
-            hearted_count=0, skipped_count=0, newly_discovered=[], log=[],
+            hearted_count=0, skipped_count=0, log=[],
         )
 
     known_prefixes = load_json(KNOWN_PREFIXES_FILE, [])
     hearted_today_start = load_daily_count(HEARTED_COUNT_FILE)
     hearted_this_run = 0
     exhausted = set(load_daily_list(EXHAUSTED_PREFIXES_FILE))
-    active_known = [p for p in known_prefixes if p not in exhausted]
-    new_candidates = generate_new_prefixes(known_prefixes, NEW_PREFIXES_PER_RUN)
-    all_prefixes = active_known + new_candidates
+    all_prefixes = [p for p in known_prefixes if p not in exhausted]
 
     with _state_lock:
         _bulk_state["total"] = len(all_prefixes)
 
-    _log(f"Checking {len(active_known)} active known prefixes "
-         f"({len(exhausted)} exhausted/skipped) + {len(new_candidates)} new")
+    _log(f"Checking {len(all_prefixes)} known prefixes "
+         f"({len(exhausted)} exhausted/skipped)")
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "web_app bulk run",
         "hearted_count": 0,
         "skipped_count": 0,
-        "newly_discovered_prefixes": [],
     }
 
     try:
@@ -142,13 +136,6 @@ def run_bulk_heart():
 
                     prev_signature = search_and_wait_for_stable_results(page, prefix, prev_signature)
                     rows = get_result_rows(page)
-
-                    if rows and prefix not in known_prefixes:
-                        known_prefixes.append(prefix)
-                        summary["newly_discovered_prefixes"].append(prefix)
-                        with _state_lock:
-                            _bulk_state["newly_discovered"].append(prefix)
-                        _log(f"[{prefix}] new prefix, {len(rows)} people")
 
                     prefix_hearted = 0
                     prefix_skipped = 0
@@ -206,8 +193,7 @@ def run_bulk_heart():
                 _bulk_state["error"] = interrupted_error
         else:
             _log(f"Done. Hearted {summary['hearted_count']}, "
-                 f"skipped {summary['skipped_count']}, "
-                 f"new prefixes {len(summary['newly_discovered_prefixes'])}")
+                 f"skipped {summary['skipped_count']}")
 
     except Exception as e:
         _log(f"ERROR: {e}")
@@ -502,7 +488,7 @@ async function poll() {
       errorBadge.textContent = 'Error: ' + s.error;
       errorBadge.classList.add('show');
     } else {
-      doneBadge.textContent = `Done! Hearted ${s.hearted_count}, skipped ${s.skipped_count} already-done, found ${s.newly_discovered.length} new prefixes.`;
+      doneBadge.textContent = `Done! Hearted ${s.hearted_count}, skipped ${s.skipped_count} already-done.`;
       doneBadge.classList.add('show');
     }
     loadSummary();

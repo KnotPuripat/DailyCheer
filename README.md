@@ -15,10 +15,11 @@ for a diagram of how it works before you dig into the code.
 2. The repo ships with `known_prefixes.json` — a pre-validated list of search terms
    (just 3-letter strings, no names) — so you don't need to rediscover the company from
    scratch. It's seeded into your local state automatically on first run.
-3. `daily_cheer_bot.py` (or the web dashboard) re-checks those terms and hearts anyone it
-   finds — skipping people it already hearted today, since the site resets who's
-   heart-able once every day. It also tries a few new random terms each run, so the list
-   grows over time as the company adds people.
+3. `daily_cheer_bot.py` (or the web dashboard) re-checks those terms, and only those —
+   never searching anything outside the known list — and hearts anyone it finds,
+   skipping people it already hearted today, since the site resets who's heart-able
+   once every day. Run `full_sweep.py` by hand whenever you want to look for newly-added
+   colleagues.
 
 It never opens a new browser tab (that would re-trigger a wallet signature prompt it
 can't approve for you), never touches MetaMask itself, and only clicks a Heart button
